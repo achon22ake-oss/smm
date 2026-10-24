@@ -266,7 +266,7 @@ function fin(p){
 // cloud: loading | local (Firebase sozlanmagan) | signedout | denied | empty (bulutda ma'lumot yo'q) | ok | error
 let CL=null, user=null, cloud='loading', lastSaved=null, wTimer=null;
 function cloudInit(api){CL=api;if(!api){cloud='local';render();}}
-function cloudUser(u){user=u;cloud=!u?'signedout':(u.email===OWNER&&u.emailVerified?'loading':'denied');render();}
+function cloudUser(u){user=u;cloud=!u?'signedout':(u.email===OWNER?'loading':'denied');render();}
 function cloudSnap(d,fromCache){
   if(!d){
     if(fromCache)return;
@@ -301,6 +301,15 @@ async function signIn(){
   if(!CL)return toast('Firebase hali sozlanmagan');
   try{if(user)await CL.signOut();await CL.signIn();}catch(e){if(e.code!=='auth/popup-closed-by-user'&&e.code!=='auth/cancelled-popup-request')toast('Kirib bo‘lmadi: '+(e.code||e.message));}
 }
+async function signInPw(ev){
+  ev.preventDefault();
+  const em=$('lg_email').value.trim(),pw=$('lg_pass').value,b=$('lg_btn');
+  if(!em||!pw)return toast('Email va parolni kiriting');
+  b.disabled=true;b.textContent='Kirilmoqda…';
+  try{await CL.signInPw(em,pw);}
+  catch(e){b.disabled=false;b.textContent='Kirish';toast(['auth/invalid-credential','auth/wrong-password','auth/user-not-found','auth/invalid-email'].includes(e.code)?'Email yoki parol noto‘g‘ri':'Kirib bo‘lmadi: '+(e.code||e.message));}
+  return false;
+}
 async function signOutCloud(){
   if(!confirm('Hisobdan chiqilsinmi? Bu qurilmadagi nusxa o‘chiriladi, bulutdagi ma’lumotlar qoladi.'))return;
   try{localStorage.removeItem(LS);localStorage.removeItem('smm_last_backup');}catch(e){}
@@ -314,17 +323,26 @@ function renderStatus(){
   else if(cloud==='ok')h=`<span class="status ok" title="${esc(user?user.email:'')}">● Bulut ${tm?'· '+tm:''}</span>`;
   else if(cloud==='empty')h=`<span class="status warn">Bulut bo‘sh</span>`;
   else if(cloud==='error')h=`<button class="status err" onclick="writeCloud()">✕ Saqlanmadi — qayta urinish</button>`;
-  else if(cloud==='signedout'||cloud==='denied')h=`<button class="status warn" onclick="signIn()">Google bilan kirish</button>`;
+  else if(cloud==='signedout'||cloud==='denied')h=`<button class="status warn" onclick="render()">Kirish</button>`;
   else if(cloud==='loading')h=`<span class="status">Ulanmoqda…</span>`;
   else h=`<span class="status" title="Faqat shu brauzerda saqlanadi">Brauzerda saqlanmoqda</span>`;
   el.innerHTML=h;
 }
 function renderGate(){
-  const denied=cloud==='denied';
-  return `<div class="panel" style="max-width:460px;margin:40px auto;text-align:center;padding:28px">
-    <h2 style="font-size:22px;margin-bottom:10px">${denied?'Ruxsat yo‘q':'Kirish'}</h2>
-    <p class="muted" style="margin:0 0 18px">${denied?`<b>${esc(user&&user.email)}</b> hisobiga bu ma’lumotlarni ko‘rishga ruxsat berilmagan.`:'Ma’lumotlar bulutda saqlanadi. Davom etish uchun Google hisobingiz bilan kiring.'}</p>
-    <button class="primary" onclick="signIn()">${denied?'Boshqa hisob bilan kirish':'Google bilan kirish'}</button></div>`;
+  if(cloud==='denied')return `<div class="panel" style="max-width:460px;margin:40px auto;text-align:center;padding:28px">
+    <h2 style="font-size:22px;margin-bottom:10px">Ruxsat yo‘q</h2>
+    <p class="muted" style="margin:0 0 18px"><b>${esc(user&&user.email)}</b> hisobiga bu ma’lumotlarni ko‘rishga ruxsat berilmagan.</p>
+    <button class="primary" onclick="signOutCloud()">Boshqa hisob bilan kirish</button></div>`;
+  return `<form class="panel" style="max-width:420px;margin:40px auto;padding:28px" onsubmit="return signInPw(event)">
+    <h2 style="font-size:22px;margin-bottom:6px">Kirish</h2>
+    <p class="muted" style="margin:0 0 18px">Ma’lumotlar bulutda saqlanadi. Email va parol bilan kiring.</p>
+    <label for="lg_email">Email</label>
+    <input id="lg_email" type="email" name="username" autocomplete="username" value="${esc(OWNER)}" style="margin-bottom:12px">
+    <label for="lg_pass">Parol</label>
+    <input id="lg_pass" type="password" name="password" autocomplete="current-password" style="margin-bottom:16px">
+    <button id="lg_btn" class="primary" type="submit" style="width:100%">Kirish</button>
+    <div class="small muted" style="text-align:center;margin:14px 0 8px">yoki</div>
+    <button type="button" style="width:100%" onclick="signIn()">Google bilan kirish</button></form>`;
 }
 
 /* ===================== Navigatsiya / render ===================== */
@@ -678,12 +696,13 @@ window.addEventListener('resize',()=>{if(Math.abs(window.innerWidth-lastW)<40)re
 render();
 </script>
 <script type="module">
-/* Firebase: Google bilan kirish + Firestore (crm/main hujjati, oflayn kesh bilan) */
+/* Firebase: email/parol yoki Google bilan kirish + Firestore (crm/main hujjati, oflayn kesh bilan) */
 const V='https://www.gstatic.com/firebasejs/11.0.2/';
 if(!FIREBASE_CONFIG||!FIREBASE_CONFIG.apiKey)cloudInit(null);
 else{
   const [{initializeApp},A,F]=await Promise.all([import(V+'firebase-app.js'),import(V+'firebase-auth.js'),import(V+'firebase-firestore.js')]);
-  const app=initializeApp(FIREBASE_CONFIG), auth=A.getAuth(app);
+  const app=initializeApp(FIREBASE_CONFIG), auth=A.initializeAuth(app,{persistence:[A.indexedDBLocalPersistence,A.browserLocalPersistence],popupRedirectResolver:A.browserPopupRedirectResolver});
+  try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}
   const db=F.initializeFirestore(app,{localCache:F.persistentLocalCache({tabManager:F.persistentMultipleTabManager()})});
   const ref=F.doc(db,'crm','main'), put=(r,s)=>F.setDoc(r,{json:JSON.stringify(s),updatedAt:s.updatedAt||0});
   let unsub=null;
@@ -693,6 +712,7 @@ else{
       try{await A.signInWithPopup(auth,p);}
       catch(e){if(e.code==='auth/popup-blocked'||e.code==='auth/operation-not-supported-in-this-environment')await A.signInWithRedirect(auth,p);else throw e;}
     },
+    signInPw:(e,p)=>A.signInWithEmailAndPassword(auth,e,p),
     signOut:()=>A.signOut(auth),
     write:s=>put(ref,s),
     backup:(day,s)=>put(F.doc(db,'crm','zaxira_'+day),s)
@@ -700,7 +720,7 @@ else{
   A.onAuthStateChanged(auth,u=>{
     if(unsub){unsub();unsub=null;}
     cloudUser(u);
-    if(u&&u.email===OWNER&&u.emailVerified)unsub=F.onSnapshot(ref,{includeMetadataChanges:true},s=>cloudSnap(s.exists()?s.data():null,s.metadata.fromCache),cloudErr);
+    if(u&&u.email===OWNER)unsub=F.onSnapshot(ref,{includeMetadataChanges:true},s=>cloudSnap(s.exists()?s.data():null,s.metadata.fromCache),cloudErr);
   });
 }
 </script>
